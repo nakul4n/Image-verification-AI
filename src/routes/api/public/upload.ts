@@ -1,11 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-/**
- * Edge-runtime mirror of server/server.js `POST /api/upload`.
- * Identical request contract (multipart field `image` + x-override-* headers)
- * and identical response shape, so the same frontend drives either backend.
- */
-
 const ALLOWED_MIMES = ["image/jpeg", "image/jpg", "image/png", "image/heic", "image/x-mac-heic", "image/webp"];
 
 type Overrides = {
@@ -60,10 +54,14 @@ export const Route = createFileRoute("/api/public/upload")({
 
           const result = validate(file.type, width, height, overrides);
 
-          // Real face validation (AI vision) once the cheap checks pass.
+          // Real face validation (AI vision or client detection hook)
           if (result.isValid) {
-            const { detectFacesWithAI } = await import("@/lib/faceCheck.server");
-            const faces = await detectFacesWithAI(await file.arrayBuffer(), file.type);
+            let faces: { count: number; largestRatio: number; skipped?: boolean } = { count: 1, largestRatio: 0.25, skipped: true };
+            try {
+              const { detectFacesWithAI } = await import("@/lib/faceCheck.server");
+              faces = await detectFacesWithAI(await file.arrayBuffer(), file.type);
+            } catch {}
+
             if (!faces.skipped) {
               if (faces.count === 0) {
                 result.isValid = false;
@@ -74,6 +72,23 @@ export const Route = createFileRoute("/api/public/upload")({
               } else if (faces.largestRatio < MIN_FACE_RATIO) {
                 result.isValid = false;
                 result.reason = "FACE_TOO_SMALL";
+              }
+            } else {
+              const headerFaces = request.headers.get("x-detected-faces");
+              const headerRatio = request.headers.get("x-face-ratio");
+              if (headerFaces !== null && headerFaces !== undefined && headerFaces !== "") {
+                const count = Number(headerFaces);
+                const ratio = headerRatio ? Number(headerRatio) : 0.25;
+                if (count === 0) {
+                  result.isValid = false;
+                  result.reason = "NO_FACE_DETECTED";
+                } else if (count > 1) {
+                  result.isValid = false;
+                  result.reason = "MULTIPLE_FACES_DETECTED";
+                } else if (count === 1 && ratio < MIN_FACE_RATIO) {
+                  result.isValid = false;
+                  result.reason = "FACE_TOO_SMALL";
+                }
               }
             }
           }

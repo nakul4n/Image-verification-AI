@@ -14,7 +14,7 @@ const app = express();
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-override-blur, x-override-small-face, x-override-multi-face, x-override-duplicate, x-img-width, x-img-height, Prefer');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-override-blur, x-override-small-face, x-override-multi-face, x-override-duplicate, x-img-width, x-img-height, x-detected-faces, x-face-ratio, Prefer');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
   }
@@ -66,11 +66,15 @@ const upload = multer({
 });
 
 function readOverrides(req) {
+  const cFaces = req.headers['x-detected-faces'];
+  const cRatio = req.headers['x-face-ratio'];
   return {
     blur: req.headers['x-override-blur'] === 'true',
     smallFace: req.headers['x-override-small-face'] === 'true',
     multiFace: req.headers['x-override-multi-face'] === 'true',
     duplicate: req.headers['x-override-duplicate'] === 'true',
+    clientDetectedFaces: cFaces !== undefined && cFaces !== null && cFaces !== '' ? Number(cFaces) : null,
+    clientFaceRatio: cRatio !== undefined && cRatio !== null && cRatio !== '' ? Number(cRatio) : null,
   };
 }
 
@@ -234,7 +238,7 @@ app.delete('/api/upload/:id', async (req, res) => {
   }
 });
 
-const DEFAULT_PORT = Number(process.env.PORT) || 5000;
+const DEFAULT_PORT = Number(process.env.PORT) || 5001;
 const server = app.listen(DEFAULT_PORT, () => {
   console.log(`Express API Service executing on port ${DEFAULT_PORT}`);
 });
@@ -242,7 +246,7 @@ const server = app.listen(DEFAULT_PORT, () => {
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     const fallbackPort = DEFAULT_PORT + 1;
-    console.log(`[server] Port ${DEFAULT_PORT} is in use (e.g. macOS AirPlay Receiver). Automatically falling back to port ${fallbackPort}.`);
+    console.log(`[server] Port ${DEFAULT_PORT} is in use. Falling back to port ${fallbackPort}.`);
     app.listen(fallbackPort, () => {
       console.log(`Express API Service executing on fallback port ${fallbackPort}`);
     });

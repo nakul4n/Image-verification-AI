@@ -175,12 +175,24 @@ class ImagePipelineService {
     }
 
     const faces = await this.detectFaces(buffer, metadata);
-    if (!faces.skipped && faces.count === 0)
-      return { ...base, isValid: false, reason: 'NO_FACE_DETECTED' };
-    if (!faces.skipped && faces.count > 1)
-      return { ...base, isValid: false, reason: 'MULTIPLE_FACES_DETECTED' };
-    if (!faces.skipped && faces.count === 1 && faces.largestRatio < MIN_FACE_RATIO) {
-      return { ...base, isValid: false, reason: 'FACE_TOO_SMALL' };
+    if (!faces.skipped) {
+      if (faces.count === 0) return { ...base, isValid: false, reason: 'NO_FACE_DETECTED' };
+      if (faces.count > 1) return { ...base, isValid: false, reason: 'MULTIPLE_FACES_DETECTED' };
+      if (faces.count === 1 && faces.largestRatio < MIN_FACE_RATIO) {
+        return { ...base, isValid: false, reason: 'FACE_TOO_SMALL' };
+      }
+    } else if (
+      triggerOverrides.clientDetectedFaces !== null &&
+      triggerOverrides.clientDetectedFaces !== undefined &&
+      !isNaN(triggerOverrides.clientDetectedFaces)
+    ) {
+      const cFaces = Number(triggerOverrides.clientDetectedFaces);
+      const cRatio = Number(triggerOverrides.clientFaceRatio ?? 0.25);
+      if (cFaces === 0) return { ...base, isValid: false, reason: 'NO_FACE_DETECTED' };
+      if (cFaces > 1) return { ...base, isValid: false, reason: 'MULTIPLE_FACES_DETECTED' };
+      if (cFaces === 1 && cRatio < MIN_FACE_RATIO) {
+        return { ...base, isValid: false, reason: 'FACE_TOO_SMALL' };
+      }
     }
 
     return { ...base, isValid: true };
