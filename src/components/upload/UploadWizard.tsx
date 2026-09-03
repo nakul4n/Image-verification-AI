@@ -179,6 +179,7 @@ export function UploadWizard() {
           const form = new FormData();
           form.append("image", file);
 
+          try {
             let res: Response;
             const headers = {
               "x-override-blur": String(overrides.blur),
