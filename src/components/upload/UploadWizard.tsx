@@ -179,19 +179,26 @@ export function UploadWizard() {
           const form = new FormData();
           form.append("image", file);
 
-          try {
-            const res = await fetch(ENDPOINT, {
-              method: "POST",
-              body: form,
-              headers: {
-                "x-override-blur": String(overrides.blur),
-                "x-override-small-face": String(overrides.smallFace),
-                "x-override-multi-face": String(overrides.multiFace),
-                "x-override-duplicate": String(overrides.duplicate),
-                "x-img-width": String(width),
-                "x-img-height": String(height),
-              },
-            });
+            let res: Response;
+            const headers = {
+              "x-override-blur": String(overrides.blur),
+              "x-override-small-face": String(overrides.smallFace),
+              "x-override-multi-face": String(overrides.multiFace),
+              "x-override-duplicate": String(overrides.duplicate),
+              "x-img-width": String(width),
+              "x-img-height": String(height),
+            };
+
+            try {
+              res = await fetch(ENDPOINT, { method: "POST", body: form, headers });
+            } catch (err) {
+              if (ENDPOINT.includes(":5000/")) {
+                const alt = ENDPOINT.replace(":5000/", ":5001/");
+                res = await fetch(alt, { method: "POST", body: form, headers });
+              } else {
+                throw err;
+              }
+            }
             const json = await res.json();
             const record = json?.data;
             if (!json?.success) hashesRef.current.delete(item.id);

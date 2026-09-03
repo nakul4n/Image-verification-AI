@@ -182,5 +182,14 @@ app.delete('/api/upload/:id', async (req, res) => {
   return res.status(200).json({ success: true });
 });
 
-const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => console.log(`Express API Service executing on port ${PORT}`));
+const PORT = Number(process.env.PORT) || 5000;
+const server = app.listen(PORT, () => console.log(`Express API Service executing on port ${PORT}`));
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    const fallbackPort = 5001;
+    console.warn(`[server] Port ${PORT} is in use (e.g. macOS AirPlay Receiver). Automatically falling back to port ${fallbackPort}.`);
+    app.listen(fallbackPort, () => console.log(`Express API Service executing on fallback port ${fallbackPort}`));
+  } else {
+    console.error(err);
+  }
+});
