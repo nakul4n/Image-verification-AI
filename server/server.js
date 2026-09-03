@@ -157,5 +157,5 @@ app.delete('/api/upload/:id', async (req, res) => {
   return res.status(200).json({ success: true });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => console.log(`Express API Service executing on port ${PORT}`));
