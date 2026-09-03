@@ -2,11 +2,9 @@ const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
 
-const isDummy = (v) => !v || v.includes('your_') || v.includes('...');
-
 /**
  * Object storage abstraction.
- * Uses Amazon S3 when valid AWS credentials + S3_BUCKET are configured, otherwise
+ * Uses Amazon S3 when AWS credentials + S3_BUCKET are configured, otherwise
  * falls back to a local ./uploads directory so the service runs with zero setup.
  */
 class StorageService {
@@ -14,29 +12,11 @@ class StorageService {
     this.bucket = process.env.S3_BUCKET;
     this.region = process.env.AWS_REGION || 'us-east-1';
     this.localDir = path.join(__dirname, '..', 'uploads');
-
-    const hasRealCredentials =
-      process.env.AWS_ACCESS_KEY_ID &&
-      process.env.AWS_SECRET_ACCESS_KEY &&
-      !isDummy(process.env.AWS_ACCESS_KEY_ID) &&
-      !isDummy(process.env.AWS_SECRET_ACCESS_KEY);
-
-    this.useS3 = Boolean(this.bucket && hasRealCredentials);
-
+    this.useS3 = Boolean(this.bucket && process.env.AWS_ACCESS_KEY_ID);
     if (this.useS3) {
-      try {
-        const { S3Client } = require('@aws-sdk/client-s3');
-        this.client = new S3Client({
-          region: this.region,
-          credentials: {
-            accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-          },
-        });
-      } catch (err) {
-        console.warn('⚠ Could not initialize S3 client, falling back to local disk:', err.message);
-        this.useS3 = false;
-      }
+      // Lazy require so the dependency is optional for local runs
+      const { S3Client } = require('@aws-sdk/client-s3');
+      this.client = new S3Client({ region: this.region });
     }
   }
 
@@ -48,25 +28,20 @@ class StorageService {
   async put(buffer, originalName, contentType) {
     const key = this.buildKey(originalName);
 
-    if (this.useS3 && this.client) {
-      try {
-        const { PutObjectCommand } = require('@aws-sdk/client-s3');
-        await this.client.send(
-          new PutObjectCommand({
-            Bucket: this.bucket,
-            Key: key,
-            Body: buffer,
-            ContentType: contentType,
-            ServerSideEncryption: 'AES256',
-          })
-        );
-        return key;
-      } catch (err) {
-        console.warn('⚠ S3 upload failed, persisting to local disk storage:', err.message);
-      }
+    if (this.useS3) {
+      const { PutObjectCommand } = require('@aws-sdk/client-s3');
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          Body: buffer,
+          ContentType: contentType,
+          ServerSideEncryption: 'AES256',
+        })
+      );
+      return key;
     }
 
-    // Local disk persistence fallback
     await fs.mkdir(path.join(this.localDir, 'uploads'), { recursive: true });
     await fs.writeFile(path.join(this.localDir, key), buffer);
     return key;
@@ -74,18 +49,12 @@ class StorageService {
 
   async remove(key) {
     if (!key) return;
-    if (this.useS3 && this.client) {
-      try {
-        const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
-        await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
-        return;
-      } catch (err) {
-        console.warn('⚠ S3 delete failed:', err.message);
-      }
+    if (this.useS3) {
+      const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
+      await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+      return;
     }
-    try {
-      await fs.rm(path.join(this.localDir, key), { force: true });
-    } catch {}
+    await fs.rm(path.join(this.localDir, key), { force: true });
   }
 
   publicUrl(key) {

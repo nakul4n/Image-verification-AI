@@ -53,4 +53,7 @@ Dev sandbox override headers: `x-override-blur`, `x-override-small-face`,
 
 ## Frontend wiring
 
-The React application communicates directly with `POST /api/upload` on this Express backend service configured via `VITE_UPLOAD_ENDPOINT=http://localhost:5000/api/upload`.
+The React app posts to `/api/public/upload` (an edge-runtime mirror with an
+identical request/response contract) so the hosted preview works without a Node
+host. Point `VITE_UPLOAD_ENDPOINT` at `http://localhost:5000/api/upload` to
+drive this Express service instead.

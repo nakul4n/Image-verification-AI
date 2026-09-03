@@ -1,11 +1,11 @@
 /**
- * Real face validation via AI Gateway vision model.
+ * Real face validation via the AI Gateway vision model.
  * Contract mirrors the Express pipeline hook: { count, largestRatio }.
  */
 
 export type FaceResult = { count: number; largestRatio: number; skipped?: boolean };
 
-const MODEL = process.env["AI_VISION_MODEL"] || "google/gemini-3.7-flash";
+const MODEL = "google/gemini-3.7-flash";
 
 const PROMPT = `You are a strict photo-validation service for a portrait upload flow.
 Look at the image and answer ONLY with a compact JSON object, no markdown, no prose:
@@ -19,7 +19,7 @@ export async function detectFacesWithAI(
   bytes: ArrayBuffer,
   mime: string,
 ): Promise<FaceResult> {
-  const key = process.env["AI_API_KEY"] || process.env["OPENAI_API_KEY"] || process.env["LOVABLE_API_KEY"];
+  const key = process.env["AI_API_KEY"] || process.env["OPENAI_API_KEY"];
   // Fail open when the gateway is unavailable — never block a legit upload on infra.
   if (!key) return { count: 1, largestRatio: 0.25, skipped: true };
 
@@ -35,8 +35,7 @@ export async function detectFacesWithAI(
   const dataUrl = `data:${mime};base64,${btoa(binary)}`;
 
   try {
-    const baseUrl = process.env["AI_GATEWAY_URL"] || "https://ai.gateway.lovable.dev/v1/chat/completions";
-    const res = await fetch(baseUrl, {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({

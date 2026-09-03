@@ -7,9 +7,10 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
+import { reportRuntimeError } from "../lib/runtime-error-reporting";
 
 function NotFoundComponent() {
   return (
@@ -36,6 +37,9 @@ function NotFoundComponent() {
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   console.error(error);
   const router = useRouter();
+  useEffect(() => {
+    reportRuntimeError(error, { boundary: "tanstack_root_error_component" });
+  }, [error]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -73,14 +77,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Aragon.ai Onboarding Workspace" },
-      { name: "description", content: "Aragon.ai Onboarding Workspace" },
-      { name: "author", content: "Aragon.ai" },
-      { property: "og:title", content: "Aragon.ai Onboarding Workspace" },
-      { property: "og:description", content: "Aragon.ai Onboarding Workspace" },
+      { title: "Photo Pipeline Pro - Image Verification Engine" },
+      { name: "description", content: "Photo Pipeline Pro Onboarding & Image Verification Engine" },
+      { name: "author", content: "Photo Pipeline Pro" },
+      { property: "og:title", content: "Photo Pipeline Pro" },
+      { property: "og:description", content: "Photo Pipeline Pro Onboarding & Image Verification Engine" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@AragonAI" },
+      
     ],
     links: [
       { rel: "preconnect", href: "https://fonts.googleapis.com" },

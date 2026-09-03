@@ -1,15 +1,7 @@
 const sharp = require('sharp');
 const heicConvert = require('heic-convert');
 
-const ALLOWED_MIMES = [
-  'image/jpeg',
-  'image/jpg',
-  'image/png',
-  'image/heic',
-  'image/heif',
-  'image/x-mac-heic',
-  'image/webp',
-];
+const ALLOWED_MIMES = ['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif', 'image/x-mac-heic'];
 
 const MIN_DIMENSION = 600;
 const BLUR_VARIANCE_THRESHOLD = 90; // variance-of-Laplacian cutoff
@@ -85,16 +77,18 @@ class ImagePipelineService {
   }
 
   /**
-   * Face detection via Vision Model.
-   * Contract: { count, largestRatio }. Fails open when unconfigured.
+   * Face detection via a vision model (AI Vision Gateway
+   * endpoint). Contract: { count, largestRatio }. Fails open when unconfigured.
    */
   async detectFaces(buffer, _metadata) {
-    const key = process.env.AI_API_KEY || process.env.AI_GATEWAY_KEY || process.env.OPENAI_API_KEY || process.env.LOVABLE_API_KEY;
-    const baseUrl = process.env.AI_GATEWAY_URL || 'https://ai.gateway.lovable.dev/v1/chat/completions';
+    const key = process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
+    const baseUrl = process.env.AI_GATEWAY_URL || 'https://api.openai.com/v1/chat/completions';
+    if (!key) return { count: 1, largestRatio: 0.25, skipped: true };
 
-    if (!key || key.includes('your_')) {
-      return { count: 1, largestRatio: 0.25, skipped: true };
-    }
+    const prompt =
+      'You are a strict photo-validation service. Reply ONLY with compact JSON: ' +
+      '{"count": <integer number of clearly visible HUMAN faces>, "largestRatio": <0-1 fraction of image area covered by the largest human face bounding box>}. ' +
+      'Animals, statues, drawings, posters and faces on screens do not count. If none, return {"count":0,"largestRatio":0}.';
 
     try {
       const jpeg = await sharp(buffer).jpeg({ quality: 80 }).resize(768, 768, { fit: 'inside' }).toBuffer();
@@ -107,10 +101,7 @@ class ImagePipelineService {
             {
               role: 'user',
               content: [
-                {
-                  type: 'text',
-                  text: 'You are a strict photo-validation service. Reply ONLY with compact JSON: {"count": <integer number of clearly visible HUMAN faces>, "largestRatio": <0-1 fraction of image area covered by the largest human face bounding box>}. Animals, statues, drawings, posters and faces on screens do not count. If none, return {"count":0,"largestRatio":0}.',
-                },
+                { type: 'text', text: prompt },
                 {
                   type: 'image_url',
                   image_url: { url: `data:image/jpeg;base64,${jpeg.toString('base64')}` },
@@ -120,7 +111,6 @@ class ImagePipelineService {
           ],
         }),
       });
-
       if (!res.ok) return { count: 1, largestRatio: 0.25, skipped: true };
       const json = await res.json();
       const text = json?.choices?.[0]?.message?.content ?? '';
@@ -175,24 +165,11 @@ class ImagePipelineService {
     }
 
     const faces = await this.detectFaces(buffer, metadata);
-    if (!faces.skipped) {
-      if (faces.count === 0) return { ...base, isValid: false, reason: 'NO_FACE_DETECTED' };
-      if (faces.count > 1) return { ...base, isValid: false, reason: 'MULTIPLE_FACES_DETECTED' };
-      if (faces.count === 1 && faces.largestRatio < MIN_FACE_RATIO) {
-        return { ...base, isValid: false, reason: 'FACE_TOO_SMALL' };
-      }
-    } else if (
-      triggerOverrides.clientDetectedFaces !== null &&
-      triggerOverrides.clientDetectedFaces !== undefined &&
-      !isNaN(triggerOverrides.clientDetectedFaces)
-    ) {
-      const cFaces = Number(triggerOverrides.clientDetectedFaces);
-      const cRatio = Number(triggerOverrides.clientFaceRatio ?? 0.25);
-      if (cFaces === 0) return { ...base, isValid: false, reason: 'NO_FACE_DETECTED' };
-      if (cFaces > 1) return { ...base, isValid: false, reason: 'MULTIPLE_FACES_DETECTED' };
-      if (cFaces === 1 && cRatio < MIN_FACE_RATIO) {
-        return { ...base, isValid: false, reason: 'FACE_TOO_SMALL' };
-      }
+    if (!faces.skipped && faces.count === 0)
+      return { ...base, isValid: false, reason: 'NO_FACE_DETECTED' };
+    if (faces.count > 1) return { ...base, isValid: false, reason: 'MULTIPLE_FACES_DETECTED' };
+    if (faces.count === 1 && faces.largestRatio < MIN_FACE_RATIO) {
+      return { ...base, isValid: false, reason: 'FACE_TOO_SMALL' };
     }
 
     return { ...base, isValid: true };

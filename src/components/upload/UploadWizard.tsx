@@ -18,8 +18,7 @@ import { DevConsole, EMPTY_OVERRIDES, type Overrides } from "./DevConsole";
 import { RejectionLink } from "./RejectionLink";
 
 const TARGET_PHOTOS = 10;
-const RAW_ENDPOINT = (import.meta.env['VITE_UPLOAD_ENDPOINT'] as string) || "http://localhost:5001/api/upload";
-const ENDPOINT = RAW_ENDPOINT.includes(":5000/") ? RAW_ENDPOINT.replace(":5000/", ":5001/") : RAW_ENDPOINT;
+const ENDPOINT = (import.meta.env['VITE_UPLOAD_ENDPOINT'] as string) || "/api/public/upload";
 
 type Item = {
   id: string;
@@ -43,144 +42,6 @@ function readDimensions(file: File): Promise<{ width: number; height: number }> 
     };
     img.src = url;
   });
-}
-
-/** In-browser Face & Subject Detection */
-async function detectFacesInBrowser(file: File): Promise<{ count: number; largestRatio: number }> {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise<HTMLImageElement | null>((resolve) => {
-      const el = new Image();
-      el.onload = () => resolve(el);
-      el.onerror = () => resolve(null);
-      el.src = url;
-    });
-    if (!img) return { count: 1, largestRatio: 0.25 };
-
-    // 1. Hardware-accelerated FaceDetector API (Chrome/Edge/macOS)
-    if ("FaceDetector" in window) {
-      try {
-        const detector = new (window as any).FaceDetector({ fastMode: false, maxDetectedFaces: 10 });
-        const detected = await detector.detect(img);
-        if (Array.isArray(detected)) {
-          const totalArea = img.naturalWidth * img.naturalHeight;
-          let largestRatio = 0;
-          for (const f of detected) {
-            const box = f.boundingBox;
-            const ratio = (box.width * box.height) / totalArea;
-            if (ratio > largestRatio) largestRatio = ratio;
-          }
-          return { count: detected.length, largestRatio };
-        }
-      } catch {}
-    }
-
-    // 2. High-precision In-Browser Canvas Analysis
-    const canvas = document.createElement("canvas");
-    const size = 320;
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return { count: 1, largestRatio: 0.25 };
-
-    ctx.drawImage(img, 0, 0, size, size);
-    const { data } = ctx.getImageData(0, 0, size, size);
-
-    const grid = new Uint8Array(size * size);
-    let skinPixelCount = 0;
-
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i]!;
-      const g = data[i + 1]!;
-      const b = data[i + 2]!;
-      const pixelIdx = i / 4;
-
-      const y = 0.299 * r + 0.587 * g + 0.114 * b;
-      const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
-      const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
-
-      if (cb >= 78 && cb <= 126 && cr >= 134 && cr <= 172 && y >= 40 && y <= 240) {
-        grid[pixelIdx] = 1;
-        skinPixelCount++;
-      }
-    }
-
-    const skinRatio = skinPixelCount / (size * size);
-    if (skinRatio < 0.02) {
-      return { count: 0, largestRatio: 0 };
-    }
-
-    const visited = new Uint8Array(size * size);
-    const regions: { x: number; y: number; w: number; h: number; pixels: number }[] = [];
-
-    for (let y = 0; y < size; y += 4) {
-      for (let x = 0; x < size; x += 4) {
-        const idx = y * size + x;
-        if (grid[idx] === 1 && !visited[idx]) {
-          let minX = x, maxX = x, minY = y, maxY = y;
-          let count = 0;
-          const queue = [idx];
-          visited[idx] = 1;
-
-          while (queue.length > 0) {
-            const curr = queue.pop()!;
-            count++;
-            const cx = curr % size;
-            const cy = Math.floor(curr / size);
-
-            if (cx < minX) minX = cx;
-            if (cx > maxX) maxX = cx;
-            if (cy < minY) minY = cy;
-            if (cy > maxY) maxY = cy;
-
-            const neighbors = [
-              cy > 0 ? curr - size : -1,
-              cy < size - 1 ? curr + size : -1,
-              cx > 0 ? curr - 1 : -1,
-              cx < size - 1 ? curr + 1 : -1,
-            ];
-
-            for (const n of neighbors) {
-              if (n >= 0 && grid[n] === 1 && !visited[n]) {
-                visited[n] = 1;
-                queue.push(n);
-              }
-            }
-          }
-
-          const w = maxX - minX + 1;
-          const h = maxY - minY + 1;
-          const aspect = h / (w || 1);
-          if (count >= 150 && w >= 25 && h >= 25 && aspect >= 0.6 && aspect <= 3.0) {
-            regions.push({ x: (minX + maxX) / 2, y: (minY + maxY) / 2, w, h, pixels: count });
-          }
-        }
-      }
-    }
-
-    const distinctPeople: typeof regions = [];
-    for (const reg of regions) {
-      const isSamePerson = distinctPeople.some((p) => {
-        const dx = Math.abs(p.x - reg.x);
-        const dy = Math.abs(p.y - reg.y);
-        return dx < 60 && dy < 85;
-      });
-      if (!isSamePerson) {
-        distinctPeople.push(reg);
-      }
-    }
-
-    if (distinctPeople.length === 0) {
-      return { count: skinRatio >= 0.04 ? 1 : 0, largestRatio: skinRatio };
-    }
-
-    const largestRatio = Math.max(...distinctPeople.map((p) => (p.w * p.h) / (size * size)));
-    return { count: distinctPeople.length, largestRatio };
-  } catch {
-    return { count: 1, largestRatio: 0.25 };
-  } finally {
-    URL.revokeObjectURL(url);
-  }
 }
 
 /** 64-bit average perceptual hash (8x8 grayscale) computed in-browser. */
@@ -227,8 +88,8 @@ function clip(name: string) {
   return `${name.slice(0, 11)}...${name.slice(-14)}`;
 }
 
-const ALLOWED_MIMES = ["image/jpeg", "image/jpg", "image/png", "image/heic", "image/heif", "image/webp"];
-const ALLOWED_EXT = /\.(jpe?g|png|heic|heif|webp)$/i;
+const ALLOWED_MIMES = ["image/jpeg", "image/jpg", "image/png", "image/heic", "image/heif"];
+const ALLOWED_EXT = /\.(jpe?g|png|heic|heif)$/i;
 const MIN_BYTES = 1024; // guard against empty/truncated files
 
 /** Pre-upload validation. Returns a rejection reason, or null when the file may be sent. */
@@ -287,14 +148,8 @@ export function UploadWizard() {
             );
             return;
           }
-
-          const [{ width, height }, hash, faceInfo] = await Promise.all([
-            readDimensions(file),
-            perceptualHash(file),
-            detectFacesInBrowser(file),
-          ]);
-
-          if (width < 600 || height < 600) {
+          const { width, height } = await readDimensions(file);
+          if (width > 0 && (width < 600 || height < 600)) {
             setItems((prev) =>
               prev.map((i) =>
                 i.id === item.id ? { ...i, state: "rejected", reason: "RESOLUTION_TOO_SMALL" } : i,
@@ -302,11 +157,11 @@ export function UploadWizard() {
             );
             return;
           }
-
-          // In-browser duplicate check against already-accepted items
+          // Near-duplicate detection against already accepted photos (64-bit aHash)
+          const hash = await perceptualHash(file);
           if (hash) {
             for (const existing of hashesRef.current.values()) {
-              if (hamming(existing, hash) <= DUPLICATE_THRESHOLD) {
+              if (hamming(hash, existing) <= DUPLICATE_THRESHOLD) {
                 setItems((prev) =>
                   prev.map((i) =>
                     i.id === item.id
@@ -317,6 +172,7 @@ export function UploadWizard() {
                 return;
               }
             }
+            // reserve immediately so two identical files in one batch can't both pass
             hashesRef.current.set(item.id, hash);
           }
 
@@ -324,27 +180,18 @@ export function UploadWizard() {
           form.append("image", file);
 
           try {
-            let res: Response;
-            const headers = {
-              "x-override-blur": String(overrides.blur),
-              "x-override-small-face": String(overrides.smallFace),
-              "x-override-multi-face": String(overrides.multiFace),
-              "x-override-duplicate": String(overrides.duplicate),
-              "x-img-width": String(width),
-              "x-img-height": String(height),
-              "x-detected-faces": String(faceInfo.count),
-              "x-face-ratio": String(faceInfo.largestRatio),
-            };
-
-            try {
-              res = await fetch(ENDPOINT, { method: "POST", body: form, headers });
-            } catch (err) {
-              if (ENDPOINT !== "/api/public/upload") {
-                res = await fetch("/api/public/upload", { method: "POST", body: form, headers });
-              } else {
-                throw err;
-              }
-            }
+            const res = await fetch(ENDPOINT, {
+              method: "POST",
+              body: form,
+              headers: {
+                "x-override-blur": String(overrides.blur),
+                "x-override-small-face": String(overrides.smallFace),
+                "x-override-multi-face": String(overrides.multiFace),
+                "x-override-duplicate": String(overrides.duplicate),
+                "x-img-width": String(width),
+                "x-img-height": String(height),
+              },
+            });
             const json = await res.json();
             const record = json?.data;
             if (!json?.success) hashesRef.current.delete(item.id);
@@ -381,130 +228,154 @@ export function UploadWizard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen bg-background font-sans">
       <DevConsole overrides={overrides} onChange={setOverrides} />
 
-      {/* Top Navbar */}
-      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white/95 px-6 backdrop-blur">
+      {/* Top navigation */}
+      <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6">
+        <div className="flex items-center gap-2">
+          <span className="grid size-7 place-items-center rounded-md brand-gradient text-sm font-black text-brand-foreground">
+            A
+          </span>
+          <span className="text-lg font-extrabold tracking-tight text-foreground">Aragon.ai</span>
+        </div>
         <button
           type="button"
-          className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700 transition-colors hover:text-slate-900"
+          aria-label="Close"
+          className="grid size-9 place-items-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-foreground"
         >
-          <ArrowLeft className="size-4" />
-          <span>Back</span>
+          <X className="size-5" />
         </button>
-
-        <div className="flex items-center gap-3">
-          <div className="h-2 w-36 overflow-hidden rounded-full bg-slate-100 sm:w-48">
-            <div
-              className="h-full bg-brand transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <span className="text-xs font-bold text-slate-600">
-            {accepted.length}/{TARGET_PHOTOS}
-          </span>
-        </div>
       </header>
 
-      {/* Main Content Layout */}
-      <main className="mx-auto flex max-w-7xl flex-col lg:flex-row">
-        {/* Left sidebar — 30% */}
-        <aside className="w-full border-b border-slate-200 bg-white px-6 py-8 lg:w-[30%] lg:border-b-0 lg:border-r">
-          <span className="inline-flex items-center rounded-md bg-brand-soft px-2.5 py-1 text-xs font-bold tracking-wide text-brand uppercase">
-            Step 1 of 3
+      {/* Global progress */}
+      <div className="border-b border-slate-200 bg-white px-6 py-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-bold text-slate-900">Uploaded Images</span>
+          <span className="text-sm font-semibold text-slate-500">
+            <span className="text-slate-900">{accepted.length}</span> of {TARGET_PHOTOS}
           </span>
-          <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-slate-900">
-            Upload Your Photos
-          </h1>
-          <p className="mt-2 text-sm leading-relaxed text-slate-600">
-            Upload at least {TARGET_PHOTOS} high quality photos of yourself to get the best results.
-          </p>
+        </div>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+          <div
+            className="h-full rounded-full brand-gradient transition-[width] duration-500 ease-out"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      </div>
 
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-700">Upload Progress</span>
-              <span className="text-xs font-bold text-brand">
-                {accepted.length}/{TARGET_PHOTOS} Uploaded
-              </span>
-            </div>
-            <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
-              <div
-                className="h-full rounded-full bg-brand transition-all duration-300"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
+      <main className="flex flex-col lg:flex-row">
+        {/* Left sidebar — 30% */}
+        <aside className="w-full border-b border-slate-200 px-6 py-8 lg:w-[30%] lg:border-b-0 lg:border-r">
+          <button
+            type="button"
+            className="flex items-center gap-1.5 text-sm font-semibold text-slate-500 transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="size-4" /> Back
+          </button>
+
+          <div className="mt-6 grid size-12 place-items-center rounded-xl border border-slate-200 bg-slate-50">
+            <TargetPortraitIcon />
           </div>
 
+          <h1 className="mt-5 text-2xl font-extrabold tracking-tight text-slate-900">
+            Upload photos
+          </h1>
+          <p className="mt-2 text-sm leading-relaxed text-slate-500">
+            Now the fun begins! Select at least 6 of your best photos. Uploading a mix of close-ups,
+            selfies and mid-range shots can help the AI better capture your face and body type.
+          </p>
+
+          {/* Dropzone */}
           <div
             onDragOver={(e) => {
               e.preventDefault();
+              if (atLimit) return;
               setDragging(true);
             }}
             onDragLeave={() => setDragging(false)}
             onDrop={(e) => {
               e.preventDefault();
               setDragging(false);
-              handleFiles(e.dataTransfer.files);
+              if (atLimit) return;
+              void handleFiles(e.dataTransfer.files);
+            }}
+            onClick={() => {
+              if (atLimit) return;
+              inputRef.current?.click();
             }}
             className={cn(
-              "mt-6 flex flex-col items-center justify-center rounded-2xl border-2 border-dashed p-8 text-center transition-all",
-              dragging
-                ? "border-brand bg-brand-soft/60"
-                : "border-slate-300 bg-white hover:border-slate-400",
-              atLimit && "pointer-events-none opacity-50",
+              "mt-6 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-5 py-7 text-center transition-colors",
+              atLimit ? "cursor-not-allowed opacity-70" : "cursor-pointer",
+              dragging && "border-brand bg-brand-soft/40",
             )}
           >
-            <div className="grid size-12 place-items-center rounded-full bg-brand-soft text-brand">
-              <TargetPortraitIcon />
-            </div>
-            <p className="mt-4 text-sm font-bold text-slate-900">
-              Drag & Drop your photos here
-            </p>
-            <p className="mt-1 text-xs text-slate-500">Supports JPEG, PNG, WebP & HEIC up to 120MB</p>
-
             <input
               ref={inputRef}
               type="file"
-              accept="image/jpeg,image/png,image/heic,image/heif,image/webp"
               multiple
+              accept="image/png,image/jpeg,image/heic"
               className="hidden"
               onChange={(e) => {
-                handleFiles(e.target.files);
-                if (e.target) e.target.value = "";
+                void handleFiles(e.target.files);
+                e.target.value = "";
               }}
             />
-
             <button
               type="button"
-              disabled={atLimit || isUploading}
-              onClick={() => inputRef.current?.click()}
-              className="mt-5 inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-xs font-bold text-white shadow-sm transition-all hover:bg-brand-dark disabled:opacity-50"
+              disabled={isUploading || atLimit}
+              title={atLimit ? `Upload limit reached — ${TARGET_PHOTOS} of ${TARGET_PHOTOS} photos accepted` : undefined}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold shadow-sm transition-colors",
+                atLimit
+                  ? "cursor-not-allowed bg-slate-200 text-slate-500"
+                  : isUploading
+                    ? "bg-brand-soft text-brand"
+                    : "bg-brand text-brand-foreground hover:opacity-90",
+              )}
             >
-              {isUploading ? (
+              {atLimit ? (
+                <>
+                  <ArrowUp className="size-4" /> Upload limit reached
+                </>
+              ) : isUploading ? (
                 <>
                   <Loader2 className="size-4 animate-spin" /> Uploading...
                 </>
               ) : (
                 <>
-                  <ArrowUp className="size-4" /> Select Photos
+                  <ArrowUp className="size-4" /> Upload files
                 </>
               )}
             </button>
+            <p className="mt-3 text-xs leading-relaxed text-slate-500">
+              {atLimit ? (
+                <>
+                  You&apos;ve reached the maximum of {TARGET_PHOTOS} accepted photos.
+                  <br />
+                  Delete a photo to upload a different one.
+                </>
+              ) : (
+                <>
+                  Click to upload or drag and drop
+                  <br />
+                  PNG, JPG, HEIC up to 120MB
+                </>
+              )}
+            </p>
           </div>
 
+          {/* Queue */}
           {items.length > 0 && (
-            <div className="mt-6">
-              <h2 className="text-xs font-bold tracking-wider text-slate-400 uppercase">
-                Uploaded Files ({items.length})
-              </h2>
+            <div className="mt-5">
+              <p className="text-xs text-slate-400">It can take up to 1 minute to upload</p>
               <ul className="mt-3 space-y-2">
                 {items.map((item) => (
                   <li
                     key={item.id}
-                    className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-2.5"
+                    className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2"
                   >
-                    <FileImage className="size-5 shrink-0 text-slate-400" />
+                    <FileImage className="size-4 shrink-0 text-slate-400" />
                     <span className="flex-1 truncate text-xs font-medium text-slate-600">
                       {clip(item.name)}
                     </span>
