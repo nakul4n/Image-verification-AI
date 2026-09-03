@@ -77,36 +77,93 @@ class ImagePipelineService {
   }
 
   /**
-   * Face detection via an OpenAI or Lovable-compatible vision model.
-   * Contract: { count, largestRatio }. Fails open when unconfigured.
+   * Face detection via Google Gemini (Free tier compatible).
    */
-  async detectFaces(buffer, _metadata) {
-    const isDummy = (k) => !k || k.includes('your_') || k.includes('...');
-    const openaiKey = !isDummy(process.env.OPENAI_API_KEY) ? process.env.OPENAI_API_KEY : null;
-    const lovableKey = !isDummy(process.env.LOVABLE_API_KEY) ? process.env.LOVABLE_API_KEY : null;
-    const key = openaiKey || lovableKey;
-
-    if (!key) {
-      return { count: 1, largestRatio: 0.25, skipped: true };
-    }
-
-    const defaultUrl = lovableKey && !openaiKey
-      ? 'https://ai.gateway.lovable.dev/v1/chat/completions'
-      : 'https://api.openai.com/v1/chat/completions';
-    const baseUrl = process.env.AI_GATEWAY_URL || process.env.OPENAI_API_BASE || defaultUrl;
-
-    const defaultModel = lovableKey && !openaiKey
-      ? 'google/gemini-3.7-flash'
-      : 'gpt-4o-mini';
-    const model = process.env.AI_VISION_MODEL || defaultModel;
-
+  async detectFacesWithGemini(jpegBuffer, geminiKey) {
     const prompt =
       'You are a strict photo-validation service. Reply ONLY with compact JSON: ' +
       '{"count": <integer number of clearly visible HUMAN faces>, "largestRatio": <0-1 fraction of image area covered by the largest human face bounding box>}. ' +
       'Animals, statues, drawings, posters and faces on screens do not count. If none, return {"count":0,"largestRatio":0}.';
 
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: prompt },
+                {
+                  inline_data: {
+                    mime_type: 'image/jpeg',
+                    data: jpegBuffer.toString('base64'),
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      });
+
+      if (!res.ok) {
+        console.warn(`[detectFaces:Gemini] API error ${res.status}:`, await res.text().catch(() => ''));
+        return { count: 1, largestRatio: 0.25, skipped: true };
+      }
+
+      const json = await res.json();
+      const text = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      const match = String(text).match(/\{[\s\S]*\}/);
+      if (!match) return { count: 1, largestRatio: 0.25, skipped: true };
+      const parsed = JSON.parse(match[0]);
+      const count = Number(parsed.count);
+      if (!Number.isFinite(count)) return { count: 1, largestRatio: 0.25, skipped: true };
+      const largestRatio = Number(parsed.largestRatio);
+      return { count, largestRatio: Number.isFinite(largestRatio) ? largestRatio : 0 };
+    } catch (err) {
+      console.warn('[detectFaces:Gemini] Request failed:', err.message);
+      return { count: 1, largestRatio: 0.25, skipped: true };
+    }
+  }
+
+  /**
+   * Face detection via an OpenAI, Gemini, or Lovable-compatible vision model.
+   * Contract: { count, largestRatio }. Fails open when unconfigured.
+   */
+  async detectFaces(buffer, _metadata) {
+    const isDummy = (k) => !k || k.includes('your_') || k.includes('...');
+    const geminiKey = !isDummy(process.env.GEMINI_API_KEY) ? process.env.GEMINI_API_KEY : null;
+    const openaiKey = !isDummy(process.env.OPENAI_API_KEY) ? process.env.OPENAI_API_KEY : null;
+    const lovableKey = !isDummy(process.env.LOVABLE_API_KEY) ? process.env.LOVABLE_API_KEY : null;
+
+    if (!geminiKey && !openaiKey && !lovableKey) {
+      return { count: 1, largestRatio: 0.25, skipped: true };
+    }
+
     try {
       const jpeg = await sharp(buffer).jpeg({ quality: 80 }).resize(768, 768, { fit: 'inside' }).toBuffer();
+
+      if (geminiKey) {
+        return await this.detectFacesWithGemini(jpeg, geminiKey);
+      }
+
+      const key = openaiKey || lovableKey;
+      const defaultUrl = lovableKey && !openaiKey
+        ? 'https://ai.gateway.lovable.dev/v1/chat/completions'
+        : 'https://api.openai.com/v1/chat/completions';
+      const baseUrl = process.env.AI_GATEWAY_URL || process.env.OPENAI_API_BASE || defaultUrl;
+
+      const defaultModel = lovableKey && !openaiKey
+        ? 'google/gemini-3.7-flash'
+        : 'gpt-4o-mini';
+      const model = process.env.AI_VISION_MODEL || defaultModel;
+
+      const prompt =
+        'You are a strict photo-validation service. Reply ONLY with compact JSON: ' +
+        '{"count": <integer number of clearly visible HUMAN faces>, "largestRatio": <0-1 fraction of image area covered by the largest human face bounding box>}. ' +
+        'Animals, statues, drawings, posters and faces on screens do not count. If none, return {"count":0,"largestRatio":0}.';
+
       const res = await fetch(baseUrl, {
         method: 'POST',
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -127,7 +184,8 @@ class ImagePipelineService {
         }),
       });
       if (!res.ok) {
-        console.warn(`[detectFaces] AI Vision API error ${res.status}:`, await res.text().catch(() => ''));
+        const errorText = await res.text().catch(() => '');
+        console.warn(`[detectFaces] AI Vision API error ${res.status}:`, errorText);
         return { count: 1, largestRatio: 0.25, skipped: true };
       }
       const json = await res.json();
