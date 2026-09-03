@@ -18,7 +18,8 @@ import { DevConsole, EMPTY_OVERRIDES, type Overrides } from "./DevConsole";
 import { RejectionLink } from "./RejectionLink";
 
 const TARGET_PHOTOS = 10;
-const ENDPOINT = (import.meta.env['VITE_UPLOAD_ENDPOINT'] as string) || "http://localhost:5000/api/upload";
+const RAW_ENDPOINT = (import.meta.env['VITE_UPLOAD_ENDPOINT'] as string) || "http://localhost:5001/api/upload";
+const ENDPOINT = RAW_ENDPOINT.includes(":5000/") ? RAW_ENDPOINT.replace(":5000/", ":5001/") : RAW_ENDPOINT;
 
 type Item = {
   id: string;
@@ -193,9 +194,8 @@ export function UploadWizard() {
             try {
               res = await fetch(ENDPOINT, { method: "POST", body: form, headers });
             } catch (err) {
-              if (ENDPOINT.includes(":5000/")) {
-                const alt = ENDPOINT.replace(":5000/", ":5001/");
-                res = await fetch(alt, { method: "POST", body: form, headers });
+              if (ENDPOINT !== "/api/public/upload") {
+                res = await fetch("/api/public/upload", { method: "POST", body: form, headers });
               } else {
                 throw err;
               }
