@@ -77,13 +77,28 @@ class ImagePipelineService {
   }
 
   /**
-   * Face detection via an OpenAI-compatible vision model.
+   * Face detection via an OpenAI or Lovable-compatible vision model.
    * Contract: { count, largestRatio }. Fails open when unconfigured.
    */
   async detectFaces(buffer, _metadata) {
-    const key = process.env.OPENAI_API_KEY;
-    const baseUrl = process.env.AI_GATEWAY_URL || process.env.OPENAI_API_BASE || 'https://api.openai.com/v1/chat/completions';
-    if (!key) return { count: 1, largestRatio: 0.25, skipped: true };
+    const isDummy = (k) => !k || k.includes('your_') || k.includes('...');
+    const openaiKey = !isDummy(process.env.OPENAI_API_KEY) ? process.env.OPENAI_API_KEY : null;
+    const lovableKey = !isDummy(process.env.LOVABLE_API_KEY) ? process.env.LOVABLE_API_KEY : null;
+    const key = openaiKey || lovableKey;
+
+    if (!key) {
+      return { count: 1, largestRatio: 0.25, skipped: true };
+    }
+
+    const defaultUrl = lovableKey && !openaiKey
+      ? 'https://ai.gateway.lovable.dev/v1/chat/completions'
+      : 'https://api.openai.com/v1/chat/completions';
+    const baseUrl = process.env.AI_GATEWAY_URL || process.env.OPENAI_API_BASE || defaultUrl;
+
+    const defaultModel = lovableKey && !openaiKey
+      ? 'google/gemini-3.7-flash'
+      : 'gpt-4o-mini';
+    const model = process.env.AI_VISION_MODEL || defaultModel;
 
     const prompt =
       'You are a strict photo-validation service. Reply ONLY with compact JSON: ' +
@@ -96,7 +111,7 @@ class ImagePipelineService {
         method: 'POST',
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: process.env.AI_VISION_MODEL || 'gpt-4o-mini',
+          model,
           messages: [
             {
               role: 'user',
@@ -111,7 +126,10 @@ class ImagePipelineService {
           ],
         }),
       });
-      if (!res.ok) return { count: 1, largestRatio: 0.25, skipped: true };
+      if (!res.ok) {
+        console.warn(`[detectFaces] AI Vision API error ${res.status}:`, await res.text().catch(() => ''));
+        return { count: 1, largestRatio: 0.25, skipped: true };
+      }
       const json = await res.json();
       const text = json?.choices?.[0]?.message?.content ?? '';
       const match = String(text).match(/\{[\s\S]*\}/);
@@ -121,7 +139,8 @@ class ImagePipelineService {
       if (!Number.isFinite(count)) return { count: 1, largestRatio: 0.25, skipped: true };
       const largestRatio = Number(parsed.largestRatio);
       return { count, largestRatio: Number.isFinite(largestRatio) ? largestRatio : 0 };
-    } catch {
+    } catch (err) {
+      console.warn('[detectFaces] request failed:', err.message);
       return { count: 1, largestRatio: 0.25, skipped: true };
     }
   }
