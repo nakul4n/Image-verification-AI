@@ -1,0 +1,33 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum UploadStatus {
+  PROCESSING
+  ACCEPTED
+  REJECTED
+  FAILED
+}
+
+model ImageUpload {
+  id              String        @id @default(uuid())
+  originalName    String
+  mimeType        String
+  s3Key           String?
+  fileSize        Int
+  width           Int?
+  height          Int?
+  status          UploadStatus  @default(PROCESSING)
+  rejectionReason String?       // e.g., "IMAGE_TOO_BLURRY", "FACE_TOO_SMALL", "MULTIPLE_FACES", "DUPLICATE_IMAGE_DETECTION"
+  imageHash       String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([imageHash]) // high-performance similarity/duplicate lookups
+  @@index([status, createdAt]) // paginated gallery queries by status
+}

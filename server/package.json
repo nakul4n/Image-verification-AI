@@ -1,0 +1,23 @@
+{
+  "name": "aragon-upload-api",
+  "version": "1.0.0",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev --name init"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.678.0",
+    "@prisma/client": "^5.22.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "heic-convert": "^2.1.0",
+    "multer": "^1.4.5-lts.1",
+    "sharp": "^0.33.5"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0"
+  }
+}

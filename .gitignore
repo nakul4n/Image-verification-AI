@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+*.local
+
+# Platform footprints & Sandbox
+.lovable/
+
+# Backend uploads & runtime storage
+server/uploads/
+uploads/
+
+# Build outputs & caches
+dist/
+dist-ssr/
+.output/
+.vinxi/
+.tanstack/
+.nitro/
+.wrangler/
+.dev.vars
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Editor & OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
